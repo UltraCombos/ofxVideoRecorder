@@ -370,6 +370,14 @@ bool ofxVideoRecorder::setupCustomOutput(int w, int h, float fps, int sampleRate
     videoPipePath = "";
     audioPipePath = "";
     pipeNumber = requestPipeNumber();
+
+#ifdef TARGET_WIN32
+	HANDLE hVPipe;
+	HANDLE hAPipe;
+	LPTSTR vPipename;
+	LPTSTR aPipename;
+#endif
+
     if(bRecordVideo) {
         width = w;
         height = h;
@@ -384,6 +392,7 @@ bool ofxVideoRecorder::setupCustomOutput(int w, int h, float fps, int sampleRate
             // TODO: add windows compatable pipe creation (does ffmpeg work with windows pipes?)
         }
 #else #ifdef TARGET_WIN32
+
 		char vpip[128];
 		int num = ofRandom(1024);
 		sprintf(vpip, "\\\\.\\pipe\\videoPipe%d", num);
@@ -431,6 +440,8 @@ bool ofxVideoRecorder::setupCustomOutput(int w, int h, float fps, int sampleRate
 		char apip[128];
 		int num = ofRandom(1024);
 		sprintf(apip, "\\\\.\\pipe\\videoPipe%d", num);
+
+
 		aPipename = convertCharArrayToLPCWSTR(apip);
 
 		hAPipe = CreateNamedPipe(
@@ -462,42 +473,105 @@ bool ofxVideoRecorder::setupCustomOutput(int w, int h, float fps, int sampleRate
     // basic ffmpeg invocation, -y option overwrites output file
 #if defined( TARGET_OSX ) || defined( TARGET_LINUX )
 	cmd << "bash --login -c '" << ffmpegLocation << (bIsSilent?" -loglevel quiet ":" ") << "-y";
-    if(bRecordAudio){
-        cmd << " -acodec pcm_s16le -f s16le -ar " << sampleRate << " -ac " << audioChannels << " -i " << audioPipePath;
-    }
-    else { // no audio stream
-        cmd << " -an";
-    }
-    if(bRecordVideo){ // video input options and file
-        cmd << " -r "<< fps << " -s " << w << "x" << h << " -f rawvideo -pix_fmt " << pixelFormat <<" -i " << videoPipePath << " -r " << fps;
-    }
-    else { // no video stream
-        cmd << " -vn";
-    }
-    cmd << " "+ outputString +"' &";
+	if (bRecordAudio) {
+		cmd << " -acodec pcm_s16le -f s16le -ar " << sampleRate << " -ac " << audioChannels << " -i " << audioPipePath;
+	}
+	else { // no audio stream
+		cmd << " -an";
+	}
+	if (bRecordVideo) { // video input options and file
+		cmd << " -r " << fps << " -s " << w << "x" << h << " -f rawvideo -pix_fmt " << pixelFormat << " -i " << videoPipePath << " -r " << fps;
+	}
+	else { // no video stream
+		cmd << " -vn";
+	}
+	cmd << " " + outputString + "' &";
 
-    // start ffmpeg thread. Ffmpeg will wait for input pipes to be opened.
-    ffmpegThread.setup(cmd.str());
+	// start ffmpeg thread. Ffmpeg will wait for input pipes to be opened.
+	ffmpegThread.setup(cmd.str());
+#else #ifdef TARGET_WIN32
+
+#endif #endif
+
 
     // wait until ffmpeg has started
-    while (!ffmpegThread.isInitialized()) {
-        usleep(10);
-    }
+#if defined( TARGET_OSX ) || defined( TARGET_LINUX )
+	while (!ffmpegThread.isInitialized()) {
+		usleep(10);
+	}
+#else #ifdef TARGET_WIN32
+
+#endif #endif
+
 
     if(bRecordAudio){
+#if defined( TARGET_OSX ) || defined( TARGET_LINUX )
         audioThread.setup(audioPipePath, &audioFrames);
+#else #ifdef TARGET_WIN32
+
+#endif #endif
     }
     if(bRecordVideo){
+#if defined( TARGET_OSX ) || defined( TARGET_LINUX )
         videoThread.setup(videoPipePath, &frames);
+#else #ifdef TARGET_WIN32
+
+#endif #endif
     }
+
+	auto& printError = [](string module, string message)
+	{
+		LPTSTR errorText = NULL;
+		FormatMessageW(
+			// use system message tables to retrieve error text
+			FORMAT_MESSAGE_FROM_SYSTEM
+			// allocate buffer on local heap for error text
+			| FORMAT_MESSAGE_ALLOCATE_BUFFER
+			// Important! will fail otherwise, since we're not 
+			// (and CANNOT) pass insertion parameters
+			| FORMAT_MESSAGE_IGNORE_INSERTS,
+			NULL,    // unused with FORMAT_MESSAGE_FROM_SYSTEM
+			GetLastError(),
+			MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+			(LPTSTR)&errorText,  // output 
+			0, // minimum size for output buffer
+			NULL);   // arguments - see note 
+
+		wstring ws = errorText;
+		string error(ws.begin(), ws.end());
+		ofLogError(module) << message << error;
+	};
+	auto& makeAudioPipe = [&]()
+	{
+		//this blocks, so we have to call it after ffmpeg is listening for a pipe
+		bool fSuccess = ConnectNamedPipe(hAPipe, NULL);
+		if (!fSuccess)
+		{
+			printError("Audio Pipe", "SetNamedPipeHandleState failed: ");
+		}
+		else {
+			ofLogNotice("Audio Pipe") << "\n==========================\nAudio Pipe Connected Successfully\n==========================\n" << endl;
+			audioThread.setup(hAPipe, &audioFrames);
+		}
+	};
+	auto& makeVideoPipe = [&]()
+	{
+		//this blocks, so we have to call it after ffmpeg is listening for a pipe
+		bool fSuccess = ConnectNamedPipe(hVPipe, NULL);
+		if (!fSuccess)
+		{
+			printError("Video Pipe", "SetNamedPipeHandleState failed: ");
+		}
+		else {
+			ofLogNotice("Video Pipe") << "\n==========================\nVideo Pipe Connected Successfully\n==========================\n" << endl;
+			videoThread.setup(hVPipe, &frames);
+		}
+	};
+#if defined( TARGET_OSX ) || defined( TARGET_LINUX )
 #else #ifdef TARGET_WIN32
 	//evidently there are issues with multiple named pipes http://trac.ffmpeg.org/ticket/1663
-
 	if (bRecordAudio && bRecordVideo) {
-		bool fSuccess;
-
 		// Audio Thread
-
 		stringstream aCmd;
 		aCmd << ffmpegLocation << " -y " << " -f s16le -acodec " << audioCodec << " -ar " << sampleRate << " -ac " << audioChannels;
 		aCmd << " -i " << convertWideToNarrow(aPipename) << " -b:a " << audioBitrate << " " << outputString << "_atemp" << audioFileExt;
@@ -505,36 +579,9 @@ bool ofxVideoRecorder::setupCustomOutput(int w, int h, float fps, int sampleRate
 		ffmpegAudioThread.setup(aCmd.str());
 		ofLogNotice("FFMpeg Command") << aCmd.str() << endl;
 
-		fSuccess = ConnectNamedPipe(hAPipe, NULL);
-		if (!fSuccess)
-		{
-			LPTSTR errorText = NULL;
-
-			FormatMessageW(
-				// use system message tables to retrieve error text
-				FORMAT_MESSAGE_FROM_SYSTEM
-				// allocate buffer on local heap for error text
-				| FORMAT_MESSAGE_ALLOCATE_BUFFER
-				// Important! will fail otherwise, since we're not 
-				// (and CANNOT) pass insertion parameters
-				| FORMAT_MESSAGE_IGNORE_INSERTS,
-				NULL,    // unused with FORMAT_MESSAGE_FROM_SYSTEM
-				GetLastError(),
-				MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-				(LPTSTR)&errorText,  // output 
-				0, // minimum size for output buffer
-				NULL);   // arguments - see note 
-			wstring ws = errorText;
-			string error(ws.begin(), ws.end());
-			ofLogError("Audio Pipe") << "SetNamedPipeHandleState failed: " << error;
-		}
-		else {
-			ofLogNotice("Audio Pipe") << "\n==========================\nAudio Pipe Connected Successfully\n==========================\n" << endl;
-			audioThread.setup(hAPipe, &audioFrames);
-		}
+		makeAudioPipe();
 
 		// Video Thread
-
 		stringstream vCmd;
 		vCmd << ffmpegLocation << " -y " << " -r " << fps << " -s " << w << "x" << h << " -f rawvideo -pix_fmt " << pixelFormat;
 		vCmd << " -i " << convertWideToNarrow(vPipename) << " -vcodec " << videoCodec << " -b:v " << videoBitrate << " " << outputString << "_vtemp" << movFileExt;
@@ -542,33 +589,7 @@ bool ofxVideoRecorder::setupCustomOutput(int w, int h, float fps, int sampleRate
 		ffmpegVideoThread.setup(vCmd.str());
 		ofLogNotice("FFMpeg Command") << vCmd.str() << endl;
 
-		fSuccess = ConnectNamedPipe(hVPipe, NULL);
-		if (!fSuccess)
-		{
-			LPTSTR errorText = NULL;
-
-			FormatMessageW(
-				// use system message tables to retrieve error text
-				FORMAT_MESSAGE_FROM_SYSTEM
-				// allocate buffer on local heap for error text
-				| FORMAT_MESSAGE_ALLOCATE_BUFFER
-				// Important! will fail otherwise, since we're not 
-				// (and CANNOT) pass insertion parameters
-				| FORMAT_MESSAGE_IGNORE_INSERTS,
-				NULL,    // unused with FORMAT_MESSAGE_FROM_SYSTEM
-				GetLastError(),
-				MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-				(LPTSTR)&errorText,  // output 
-				0, // minimum size for output buffer
-				NULL);   // arguments - see note 
-			wstring ws = errorText;
-			string error(ws.begin(), ws.end());
-			ofLogError("Video Pipe") << "SetNamedPipeHandleState failed: " << error;
-		}
-		else {
-			ofLogNotice("Video Pipe") << "\n==========================\nVideo Pipe Connected Successfully\n==========================\n" << endl;
-			videoThread.setup(hVPipe, &frames);
-		}
+		makeVideoPipe();
 	}
 	else {
 		cmd << ffmpegLocation << " -y ";
@@ -595,66 +616,11 @@ bool ofxVideoRecorder::setupCustomOutput(int w, int h, float fps, int sampleRate
 		ffmpegThread.setup(cmd.str()); // start ffmpeg thread, will wait for input pipes to be opened
 
 		if (bRecordAudio) {
-			//this blocks, so we have to call it after ffmpeg is listening for a pipe
-			bool fSuccess = ConnectNamedPipe(hAPipe, NULL);
-			if (!fSuccess)
-			{
-				LPTSTR errorText = NULL;
-
-				FormatMessageW(
-					// use system message tables to retrieve error text
-					FORMAT_MESSAGE_FROM_SYSTEM
-					// allocate buffer on local heap for error text
-					| FORMAT_MESSAGE_ALLOCATE_BUFFER
-					// Important! will fail otherwise, since we're not 
-					// (and CANNOT) pass insertion parameters
-					| FORMAT_MESSAGE_IGNORE_INSERTS,
-					NULL,    // unused with FORMAT_MESSAGE_FROM_SYSTEM
-					GetLastError(),
-					MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-					(LPTSTR)&errorText,  // output 
-					0, // minimum size for output buffer
-					NULL);   // arguments - see note 
-				wstring ws = errorText;
-				string error(ws.begin(), ws.end());
-				ofLogError("Audio Pipe") << "SetNamedPipeHandleState failed: " << error;
-			}
-			else {
-				ofLogNotice("Audio Pipe") << "\n==========================\nAudio Pipe Connected Successfully\n==========================\n" << endl;
-				audioThread.setup(hAPipe, &audioFrames);
-			}
+			makeAudioPipe();
 		}
 		if (bRecordVideo) {
-			//this blocks, so we have to call it after ffmpeg is listening for a pipe
-			bool fSuccess = ConnectNamedPipe(hVPipe, NULL);
-			if (!fSuccess)
-			{
-				LPTSTR errorText = NULL;
-
-				FormatMessageW(
-					// use system message tables to retrieve error text
-					FORMAT_MESSAGE_FROM_SYSTEM
-					// allocate buffer on local heap for error text
-					| FORMAT_MESSAGE_ALLOCATE_BUFFER
-					// Important! will fail otherwise, since we're not 
-					// (and CANNOT) pass insertion parameters
-					| FORMAT_MESSAGE_IGNORE_INSERTS,
-					NULL,    // unused with FORMAT_MESSAGE_FROM_SYSTEM
-					GetLastError(),
-					MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-					(LPTSTR)&errorText,  // output 
-					0, // minimum size for output buffer
-					NULL);   // arguments - see note 
-				wstring ws = errorText;
-				string error(ws.begin(), ws.end());
-				ofLogError("Video Pipe") << "SetNamedPipeHandleState failed: " << error;
-			}
-			else {
-				ofLogNotice("Video Pipe") << "\n==========================\nVideo Pipe Connected Successfully\n==========================\n" << endl;
-				videoThread.setup(hVPipe, &frames);
-			}
+			makeVideoPipe();
 		}
-
 	}
 #endif #endif
 

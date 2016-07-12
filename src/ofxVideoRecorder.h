@@ -261,10 +261,6 @@ private:
 #endif
 
 #ifdef TARGET_WIN32
-	HANDLE hVPipe;
-	HANDLE hAPipe;
-	LPTSTR vPipename;
-	LPTSTR aPipename;
 	string movFileExt = ".mp4";
 	string audioFileExt = ".m4a";
 #endif
