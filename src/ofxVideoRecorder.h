@@ -61,9 +61,15 @@ struct audioFrameShort {
 class ofxVideoDataWriterThread : public ofThread {
 public:
     ofxVideoDataWriterThread();
-//    void setup(ofFile *file, lockFreeQueue<ofPixels *> * q);
-    void setup(string filePath, lockFreeQueue<ofPixels *> * q);
-    void threadedFunction();
+#if defined( TARGET_OSX ) || defined( TARGET_LINUX )
+	//    void setup(ofFile *file, lockFreeQueue<ofPixels *> * q);
+	void setup(string filePath, lockFreeQueue<ofPixels *> * q);
+#else #ifdef TARGET_WIN32
+	void setup(HANDLE pipeHandle, lockFreeQueue<ofPixels *> * q);
+	HANDLE videoHandle;
+	//HANDLE fileHandle;
+#endif #endif
+	void threadedFunction();
     void signal();
     void setPipeNonBlocking();
     bool isWriting() { return bIsWriting; }
@@ -85,9 +91,15 @@ private:
 class ofxAudioDataWriterThread : public ofThread {
 public:
     ofxAudioDataWriterThread();
+#if defined( TARGET_OSX ) || defined( TARGET_LINUX )
 //    void setup(ofFile *file, lockFreeQueue<audioFrameShort *> * q);
     void setup(string filePath, lockFreeQueue<audioFrameShort *> * q);
-    void threadedFunction();
+#else #ifdef TARGET_WIN32
+	void setup(HANDLE pipeHandle, lockFreeQueue<audioFrameShort *> * q);
+	HANDLE audioHandle;
+	//HANDLE fileHandle;
+#endif #endif
+	void threadedFunction();
     void signal();
     void setPipeNonBlocking();
     bool isWriting() { return bIsWriting; }
@@ -194,6 +206,8 @@ private:
     ofxVideoDataWriterThread videoThread;
     ofxAudioDataWriterThread audioThread;
     execThread ffmpegThread;
+	execThread ffmpegVideoThread;
+	execThread ffmpegAudioThread;
 //    ofFile videoPipe, audioPipe;
     int videoPipeFd, audioPipeFd;
     int pipeNumber;
@@ -203,4 +217,55 @@ private:
     static void retirePipeNumber(int num);
 
     void outputFileComplete();
+
+
+#ifdef TARGET_WIN32
+	std::wstring convertNarrowToWide(const std::string& as) {
+		if (as.empty())    return std::wstring();
+		size_t reqLength = ::MultiByteToWideChar(CP_UTF8, 0, as.c_str(), (int)as.length(), 0, 0);
+		std::wstring ret(reqLength, L'\0');
+		::MultiByteToWideChar(CP_UTF8, 0, as.c_str(), (int)as.length(), &ret[0], (int)ret.length());
+		return ret;
+	}
+
+	wchar_t *convertCharArrayToLPCWSTR(const char* charArray)
+	{
+		wchar_t* wString = new wchar_t[4096];
+		MultiByteToWideChar(CP_ACP, 0, charArray, -1, wString, 4096);
+		return wString;
+	}
+
+	std::string convertWideToNarrow(const wchar_t *s, char dfault = '?',
+		const std::locale& loc = std::locale())
+	{
+		std::ostringstream stm;
+
+		while (*s != L'\0') {
+			stm << std::use_facet< std::ctype<wchar_t> >(loc).narrow(*s++, dfault);
+		}
+		return stm.str();
+	}
+	bool runCustomScript(string script)
+	{
+		stringstream cmd;
+		cmd << ffmpegLocation << " -y ";
+
+
+		ofLogNotice("FFMpeg Command") << script << endl;
+		ffmpegThread.setup(script);
+
+		bIsInitialized = true;
+
+		return bIsInitialized;
+	}
+#endif
+
+#ifdef TARGET_WIN32
+	HANDLE hVPipe;
+	HANDLE hAPipe;
+	LPTSTR vPipename;
+	LPTSTR aPipename;
+	string movFileExt = ".mp4";
+	string audioFileExt = ".m4a";
+#endif
 };
