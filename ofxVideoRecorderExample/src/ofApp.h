@@ -31,7 +31,7 @@ public:
     string fileName;
     string fileExt;
 
-    void recordingComplete(ofxVideoRecorderOutputFileCompleteEventArgs& args);
+    //void recordingComplete(ofxVideoRecorderOutputFileCompleteEventArgs& args);
 
     ofFbo recordFbo;
     ofPixels recordPixels;

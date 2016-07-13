@@ -2,13 +2,14 @@
 
 //--------------------------------------------------------------
 void ofApp::setup(){
-    sampleRate = 44100;
+    sampleRate = 16000;
     channels = 2;
 
-    ofSetFrameRate(60);
+    ofSetFrameRate(30);
     ofSetLogLevel(OF_LOG_VERBOSE);
     vidGrabber.setDesiredFrameRate(30);
     vidGrabber.initGrabber(640, 480);
+	vidRecorder.setFfmpegLocation("C:/ffmpeg/bin/ffmpeg.exe");
 //    vidRecorder.setFfmpegLocation(ofFilePath::getAbsolutePath("ffmpeg")); // use this is you have ffmpeg installed in your data folder
 
     fileName = "testMovie";
@@ -18,10 +19,10 @@ void ofApp::setup(){
     // run 'ffmpeg -codecs' to find out what your implementation supports (or -formats on some older versions)
     vidRecorder.setVideoCodec("mpeg4");
     vidRecorder.setVideoBitrate("800k");
-    vidRecorder.setAudioCodec("mp3");
-    vidRecorder.setAudioBitrate("192k");
+    //vidRecorder.setAudioCodec("mp3");
+    //vidRecorder.setAudioBitrate("192k");
 
-    ofAddListener(vidRecorder.outputFileCompleteEvent, this, &ofApp::recordingComplete);
+//    ofAddListener(vidRecorder.outputFileCompleteEvent, this, &ofApp::recordingComplete);
 
 //    soundStream.listDevices();
 //    soundStream.setDeviceID(11);
@@ -34,7 +35,7 @@ void ofApp::setup(){
 
 //--------------------------------------------------------------
 void ofApp::exit(){
-    ofRemoveListener(vidRecorder.outputFileCompleteEvent, this, &ofApp::recordingComplete);
+    //ofRemoveListener(vidRecorder.outputFileCompleteEvent, this, &ofApp::recordingComplete);
     vidRecorder.close();
 }
 
@@ -88,9 +89,9 @@ void ofApp::audioIn(float *input, int bufferSize, int nChannels){
 }
 
 //--------------------------------------------------------------
-void ofApp::recordingComplete(ofxVideoRecorderOutputFileCompleteEventArgs& args){
-    cout << "The recoded video file is now complete." << endl;
-}
+// void ofApp::recordingComplete(ofxVideoRecorderOutputFileCompleteEventArgs& args){
+//     cout << "The recoded video file is now complete." << endl;
+// }
 
 //--------------------------------------------------------------
 void ofApp::keyPressed(int key){

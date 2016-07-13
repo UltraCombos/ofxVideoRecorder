@@ -279,7 +279,9 @@ void ofxAudioDataWriterThread::threadedFunction(){
             delete frame;
         }
         else{
-            condition.wait(conditionMutex);
+			conditionMutex.lock();
+			condition.wait(conditionMutex);
+			conditionMutex.unlock();
         }
     }
 
@@ -329,12 +331,12 @@ bool ofxVideoRecorder::setup(string fname, int w, int h, float fps, int sampleRa
     moviePath = ofFilePath::getAbsolutePath(fileName);
 
     stringstream outputSettings;
-    outputSettings
-    << " -vcodec " << videoCodec
-    << " -b " << videoBitrate
-    << " -acodec " << audioCodec
-    << " -ab " << audioBitrate
-    << " " << absFilePath;
+	outputSettings
+//     << " -vcodec " << videoCodec
+//     << " -b:v " << videoBitrate
+//     << " -acodec " << audioCodec
+//     << " -ab " << audioBitrate
+     << " " << absFilePath;
 
     return setupCustomOutput(w, h, fps, sampleRate, channels, outputSettings.str(), sysClockSync, silent);
 }
@@ -469,18 +471,40 @@ bool ofxVideoRecorder::setupCustomOutput(int w, int h, float fps, int sampleRate
 #endif #endif
     }
 
+
+	auto& append_audio_cmd = [&](stringstream& cmd)
+	{
+		cmd << " -f s16le -acodec " << audioCodec << " -ar " << sampleRate << " -ac " << audioChannels;
+#if defined( TARGET_OSX ) || defined( TARGET_LINUX )
+		cmd << " -i " << audioPipePath;
+#else #ifdef TARGET_WIN32
+		cmd << " -i " << convertWideToNarrow(aPipename);
+		cmd << " -b:a " << audioBitrate;
+#endif #endif
+	};
+	auto& append_vedio_cmd = [&](stringstream& cmd)
+	{
+		cmd << " -r " << fps << " -s " << w << "x" << h << " -f rawvideo -pix_fmt " << pixelFormat;
+#if defined( TARGET_OSX ) || defined( TARGET_LINUX )
+		cmd << " -i " << videoPipePath;
+#else #ifdef TARGET_WIN32
+		cmd << " -i " << convertWideToNarrow(vPipename) << " -vcodec " << videoCodec << " -b:v " << videoBitrate;
+#endif #endif
+
+	};
+
     stringstream cmd;
     // basic ffmpeg invocation, -y option overwrites output file
 #if defined( TARGET_OSX ) || defined( TARGET_LINUX )
 	cmd << "bash --login -c '" << ffmpegLocation << (bIsSilent?" -loglevel quiet ":" ") << "-y";
 	if (bRecordAudio) {
-		cmd << " -acodec pcm_s16le -f s16le -ar " << sampleRate << " -ac " << audioChannels << " -i " << audioPipePath;
+		append_audio_cmd(cmd);
 	}
 	else { // no audio stream
 		cmd << " -an";
 	}
 	if (bRecordVideo) { // video input options and file
-		cmd << " -r " << fps << " -s " << w << "x" << h << " -f rawvideo -pix_fmt " << pixelFormat << " -i " << videoPipePath << " -r " << fps;
+		append_vedio_cmd(cmd);
 	}
 	else { // no video stream
 		cmd << " -vn";
@@ -573,8 +597,9 @@ bool ofxVideoRecorder::setupCustomOutput(int w, int h, float fps, int sampleRate
 	if (bRecordAudio && bRecordVideo) {
 		// Audio Thread
 		stringstream aCmd;
-		aCmd << ffmpegLocation << " -y " << " -f s16le -acodec " << audioCodec << " -ar " << sampleRate << " -ac " << audioChannels;
-		aCmd << " -i " << convertWideToNarrow(aPipename) << " -b:a " << audioBitrate << " " << outputString << "_atemp" << audioFileExt;
+		aCmd << ffmpegLocation << " -y ";
+		append_audio_cmd(aCmd);
+		aCmd << " " << outputString << "_atemp" << audioFileExt;
 
 		ffmpegAudioThread.setup(aCmd.str());
 		ofLogNotice("FFMpeg Command") << aCmd.str() << endl;
@@ -583,8 +608,9 @@ bool ofxVideoRecorder::setupCustomOutput(int w, int h, float fps, int sampleRate
 
 		// Video Thread
 		stringstream vCmd;
-		vCmd << ffmpegLocation << " -y " << " -r " << fps << " -s " << w << "x" << h << " -f rawvideo -pix_fmt " << pixelFormat;
-		vCmd << " -i " << convertWideToNarrow(vPipename) << " -vcodec " << videoCodec << " -b:v " << videoBitrate << " " << outputString << "_vtemp" << movFileExt;
+		vCmd << ffmpegLocation << " -y ";
+		append_vedio_cmd(vCmd);
+		vCmd << " " << outputString << "_vtemp" << movFileExt;
 
 		ffmpegVideoThread.setup(vCmd.str());
 		ofLogNotice("FFMpeg Command") << vCmd.str() << endl;
@@ -594,21 +620,19 @@ bool ofxVideoRecorder::setupCustomOutput(int w, int h, float fps, int sampleRate
 	else {
 		cmd << ffmpegLocation << " -y ";
 		if (bRecordAudio) {
-			cmd << " -f s16le -acodec " << audioCodec << " -ar " << sampleRate << " -ac " << audioChannels << " -i " << convertWideToNarrow(aPipename);
+			append_audio_cmd(cmd);
 		}
 		else { // no audio stream
 			cmd << " -an";
 		}
+
 		if (bRecordVideo) { // video input options and file
-			cmd << " -r " << fps << " -s " << w << "x" << h << " -f rawvideo -pix_fmt " << pixelFormat << " -i " << convertWideToNarrow(vPipename);
+			append_vedio_cmd(cmd);
 		}
 		else { // no video stream
 			cmd << " -vn";
 		}
-		if (bRecordAudio)
-			cmd << " -b:a " << audioBitrate;
-		if (bRecordVideo)
-			cmd << " -vcodec " << videoCodec << " -b:v " << videoBitrate;
+
 		cmd << " " << outputString << movFileExt;
 
 		ofLogNotice("FFMpeg Command") << cmd.str() << endl;
@@ -805,7 +829,7 @@ void ofxVideoRecorder::threadedFunction()
             audioThread.signal();
         }
     }
-    else if(bRecordVideo) {
+    if(bRecordVideo) {
         while(frames.size() > 0) {
             // if there are frames in the queue or the thread is writing, signal them until the work is done.
             videoThread.signal();
