@@ -53,7 +53,14 @@ void execThread::setup(string command){
 void execThread::threadedFunction(){
     if(isThreadRunning()){
         ofLogVerbose("execThread") << "starting command: " <<  execCommand;
-        int result = system(execCommand.c_str());
+#if defined( TARGET_OSX ) || defined( TARGET_LINUX )
+		int result = system(execCommand.c_str());
+#else #ifdef TARGET_WIN32
+		//string cmd = "start " + execCommand;
+		initialized = true;
+		//int result = system(cmd.c_str());
+		int result = system(execCommand.c_str());
+#endif #endif
         if (result == 0) {
             ofLogVerbose("execThread") << "command completed successfully.";
             initialized = true;
@@ -663,7 +670,7 @@ bool ofxVideoRecorder::setupCustomOutput(int w, int h, float fps, int sampleRate
 bool ofxVideoRecorder::addFrame(const ofPixels &pixels){
     if (!bIsRecording || bIsPaused) return false;
 
-    if(bIsInitialized && bRecordVideo/* && ffmpegThread.isInitialized()*/)
+    if(bIsInitialized && bRecordVideo && ffmpegThread.isInitialized())
     {
         int framesToAdd = 1; // default add one frame per request
 
